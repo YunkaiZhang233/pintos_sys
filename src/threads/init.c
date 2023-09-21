@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "ctype.h"
 #include "devices/kbd.h"
 #include "devices/input.h"
 #include "devices/serial.h"
@@ -69,6 +70,9 @@ static void usage (void);
 static void locate_block_devices (void);
 static void locate_block_device (enum block_type, const char *name);
 #endif
+
+static const char new_line_char = 13;
+static const char backspace_char = 127;
 
 int pintos_init (void) NO_RETURN;
 
@@ -134,6 +138,44 @@ pintos_init (void)
     run_actions (argv);
   } else {
     // TODO: no command line passed to kernel. Run interactively 
+    size_t command_max_input = 20;
+    char* buf = (char *) malloc(command_max_input);
+    while (true) {
+      printf("PKUOS>");
+      memset(buf, '\0', command_max_input);
+      size_t index = 0;
+      while (true) {
+        char c = input_getc();
+        if (c == new_line_char) {
+          printf("\n"); // a line terminates here and switch to the next line
+          break;
+        } else 
+        if (c == backspace_char) {
+          if (index > 0) {
+            buf[--index] = '\0';
+            printf("\b \b"); // double backspace
+          }
+          continue;
+        }
+        buf[index++] = c;
+        if (isprint(c)) {
+          printf("%c", c);
+        }
+      }
+      if (strcmp(buf, "whoami") == 0) {
+        printf("MyStudentID\n");
+      } 
+      else
+      if (strcmp(buf, "exit") == 0) {
+        break;
+      } 
+      else 
+      {
+        printf("Invalid Command\n");
+      }
+    }
+    free(buf);
+    printf("Interactive Shell Terminated.\n");
   }
 
   /* Finish up. */

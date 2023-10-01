@@ -7,6 +7,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "threads/malloc.h"
   
 /** See [8254] for hardware details of the 8254 timer chip. */
 
@@ -24,11 +25,44 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 
+/** Records a thread with sleep time in the control queue.
+*/
+struct thread_in_sleep_entry 
+{
+  struct list_elem elem;
+  struct thread *thr;
+  int64_t sleep_time;
+};
+
+static struct list thread_in_sleep_list;
+
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
+static void sleep_list_update(void);
+
+/* Loop through the list of sleeping threads and wake up threads
+    that have reached required sleeping time. */
+static void
+sleep_list_update(void) 
+{
+  struct list_elem *e;
+  for (e = list_begin (&thread_in_sleep_list); 
+      e != list_end (&thread_in_sleep_list);
+      ) 
+  {
+    struct thread_in_sleep_entry *thread_entry 
+      = list_entry(e, struct thread_in_sleep_entry, elem);
+    if (--(thread_entry -> sleep_time) <= 0) {
+      e = list_remove(e);
+      thread_unblock(thread_entry -> thr);
+    } else {
+      e = list_next(e);
+    }
+  }
+}
 
 /** Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
@@ -37,6 +71,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  list_init(&thread_in_sleep_list);
 }
 
 /** Calibrates loops_per_tick, used to implement brief delays. */
@@ -89,11 +124,20 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
-  int64_t start = timer_ticks ();
-
-  ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  if (ticks < 0) { // Nothing to execute later for this thread
+    return;
+  }
+  enum intr_level old_level = intr_disable();
+  struct thread_in_sleep_entry *thread_entry = 
+                                (struct thread_in_sleep_entry *)
+                                malloc(sizeof(struct thread_in_sleep_entry));
+  if (thread_entry == NULL)
+    PANIC("Failed to allocate memory for thread entry in sleep management");
+  thread_entry -> thr = thread_current();
+  thread_entry -> sleep_time = ticks;
+  list_push_back(&thread_in_sleep_list, &(thread_entry->elem));
+  thread_block();
+  intr_set_level(old_level);
 }
 
 /** Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -171,6 +215,7 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
+  sleep_list_update();
   thread_tick ();
 }
 
